@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
-import { getSuite, getSnapshots } from "../api";
-import type { Suite, AnalysisJob, AnalysisSnapshot } from "../types";
+import { getSuite, getSnapshots, getResultByJob } from "../api";
+import type { Suite, AnalysisJob, AnalysisSnapshot, AnalysisResult } from "../types";
 import { StatusBadge } from "../components/StatusBadge";
 import { MetricsPanel } from "../components/MetricsPanel";
 import { ScoreChart } from "../components/ScoreChart";
@@ -23,6 +23,7 @@ export const SuitePage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [suite, setSuite] = useState<Suite | null>(null);
   const [snapshots, setSnapshots] = useState<Record<string, AnalysisSnapshot[]>>({});
+  const [results, setResults] = useState<Record<string, AnalysisResult>>({});
   const [loading, setLoading] = useState(true);
 
   const reload = useCallback(async () => {
@@ -31,7 +32,7 @@ export const SuitePage: React.FC = () => {
       const s = await getSuite(id);
       setSuite(s);
 
-      // Fetch snapshots for all known jobs
+      // Fetch snapshots and results for all known jobs
       const entries = await Promise.all(
         s.job_ids.map(async (jid) => {
           try {
@@ -43,6 +44,21 @@ export const SuitePage: React.FC = () => {
         })
       );
       setSnapshots(Object.fromEntries(entries));
+
+      const completedJobs = (s.jobs ?? []).filter((j) =>
+        ["completed", "failed", "cancelled"].includes(j.status)
+      );
+      const resultEntries = await Promise.all(
+        completedJobs.map(async (j) => {
+          try {
+            const r = await getResultByJob(j.id);
+            return [j.id, r] as [string, AnalysisResult];
+          } catch {
+            return null;
+          }
+        })
+      );
+      setResults(Object.fromEntries(resultEntries.filter((e): e is [string, AnalysisResult] => e !== null)));
     } catch {
       /* ignore */
     } finally {
@@ -145,25 +161,38 @@ export const SuitePage: React.FC = () => {
             const job = jobs[i] ?? null;
             const scheduledAt = suite.scheduled_ats[i];
             const snaps = job ? (snapshots[job.id] ?? []) : [];
+            const result = job ? (results[job.id] ?? null) : null;
             const isNext = i === launchedCount && launchedCount < suite.run_count;
-            const isPending = i > launchedCount;
+            const isCompleted = job?.status === "completed";
+
+            const recColors = {
+              rollout: { border: "border-emerald-700", bg: "bg-emerald-950/30", text: "text-emerald-400" },
+              rollback: { border: "border-red-700", bg: "bg-red-950/30", text: "text-red-400" },
+              inconclusive: { border: "border-amber-700", bg: "bg-amber-950/30", text: "text-amber-400" },
+            };
+            const rc = result ? recColors[result.recommendation] : null;
 
             return (
               <div
                 key={i}
                 className={`rounded-lg border p-4 space-y-3 ${
-                  job
+                  rc
+                    ? `${rc.border} ${rc.bg}`
+                    : job
                     ? "border-gray-700 bg-gray-800/50"
                     : isNext
                     ? "border-blue-800 bg-blue-950/20"
                     : "border-gray-800 bg-gray-900/30"
                 }`}
               >
+                {/* Row 1: run number + status + job id + timing */}
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-3">
                     <span
                       className={`text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center ${
-                        job
+                        rc
+                          ? `${rc.text} border ${rc.border}`
+                          : job
                           ? "bg-blue-600 text-white"
                           : isNext
                           ? "bg-blue-900 text-blue-300 border border-blue-700"
@@ -203,7 +232,23 @@ export const SuitePage: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Per-run progress bar */}
+                {/* Result banner — always visible when completed */}
+                {isCompleted && result && (
+                  <div className="flex items-center justify-between rounded-md px-4 py-3 bg-gray-900/60 border border-gray-700">
+                    <div>
+                      <p className="text-xs text-gray-400 uppercase tracking-wider">Recommendation</p>
+                      <p className={`text-xl font-bold mt-0.5 ${rc?.text}`}>
+                        {result.recommendation.toUpperCase()}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-gray-400">Score</p>
+                      <p className="text-3xl font-bold text-white">{Math.round(result.score)}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Progress bar — shown while active */}
                 {job && (job.status === "running" || job.status === "paused") && (
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs text-gray-500">
@@ -219,16 +264,12 @@ export const SuitePage: React.FC = () => {
                   </div>
                 )}
 
-                {/* Per-run score chart (collapsed, only when data exists) */}
+                {/* Score chart — always visible when data exists */}
                 {snaps.length > 1 && (
-                  <details>
-                    <summary className="text-xs text-gray-500 cursor-pointer select-none hover:text-gray-300">
-                      Score chart ({snaps.length} points)
-                    </summary>
-                    <div className="mt-3">
-                      <ScoreChart snapshots={snaps} />
-                    </div>
-                  </details>
+                  <div>
+                    <p className="text-xs text-gray-500 mb-2">Score over time</p>
+                    <ScoreChart snapshots={snaps} />
+                  </div>
                 )}
               </div>
             );

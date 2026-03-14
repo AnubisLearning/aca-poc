@@ -34,7 +34,9 @@ const io = new IOServer(server, {
 
 app.use(cors({ origin: "*" }));
 app.use(morgan("combined"));
-app.use(express.json());
+// Note: express.json() is applied only to composite endpoints below,
+// NOT globally — http-proxy-middleware v3 cannot forward a body that
+// body-parser has already consumed.
 
 // ── Redis subscriber ───────────────────────────────────────────────────────
 
@@ -184,7 +186,7 @@ app.use(
 // ── Convenience composite endpoints ───────────────────────────────────────
 
 /** POST /api/runs  – create a job AND immediately start it */
-app.post("/api/runs", async (req: Request, res: Response) => {
+app.post("/api/runs", express.json(), async (req: Request, res: Response) => {
   try {
     const createResp = await axios.post(`${JOB_URL}/jobs`, req.body);
     const job = createResp.data;

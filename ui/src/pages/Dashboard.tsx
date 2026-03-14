@@ -227,25 +227,25 @@ export const Dashboard: React.FC = () => {
         {suiteError && <p className="text-red-400 text-sm">{suiteError}</p>}
       </div>
 
-      {/* Recent Jobs */}
+      {/* Active Jobs */}
       <div className="card space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-white flex items-center gap-2">
             <Activity className="w-5 h-5 text-gray-400" />
-            Recent Jobs
+            Active Jobs
           </h2>
           <Link to="/jobs" className="text-blue-400 text-sm hover:text-blue-300">
-            View all →
+            Job History →
           </Link>
         </div>
 
-        {jobs.length === 0 ? (
+        {jobs.filter((j) => ["pending", "running", "paused"].includes(j.status)).length === 0 ? (
           <p className="text-gray-500 text-sm text-center py-8">
-            No jobs yet. Launch an analysis above.
+            No active jobs. Launch an analysis above.
           </p>
         ) : (
           <div className="divide-y divide-gray-800">
-            {jobs.slice(0, 8).map((job) => {
+            {jobs.filter((j) => ["pending", "running", "paused"].includes(j.status)).map((job) => {
               const cfg = configs.find((c) => c.id === job.config_id);
               return (
                 <div key={job.id} className="flex items-center justify-between py-3">

@@ -217,9 +217,18 @@ export const JobDetailPage: React.FC = () => {
         </div>
       )}
 
-      {/* Grafana-style metrics panel */}
+      {/* Grafana-style metrics panel — expand to view */}
       {snapshots.length > 0 && (
-        <MetricsPanel snapshots={snapshots} />
+        <details className="group">
+          <summary className="card cursor-pointer select-none flex items-center justify-between text-sm text-gray-400 hover:text-gray-200 transition-colors">
+            <span className="font-medium">Metrics · Canary vs Baseline</span>
+            <span className="text-xs text-gray-600 group-open:hidden">click to expand</span>
+            <span className="text-xs text-gray-600 hidden group-open:inline">click to collapse</span>
+          </summary>
+          <div className="mt-3">
+            <MetricsPanel snapshots={snapshots} />
+          </div>
+        </details>
       )}
 
       {/* Final recommendation banner */}

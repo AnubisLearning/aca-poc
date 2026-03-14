@@ -1,0 +1,171 @@
+version: "3.9"
+
+services:
+  # ─────────────────────────────────────────────
+  # Infrastructure
+  # ─────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: aca
+      POSTGRES_PASSWORD: aca_secret
+      POSTGRES_DB: aca
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aca"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+
+  # Mock metrics exporter – simulates canary/baseline app metrics
+  mock-exporter:
+    build:
+      context: ./infra/mock-exporter
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      EXPORTER_PORT: 8000
+    depends_on:
+      - prometheus
+
+  # ─────────────────────────────────────────────
+  # Microservices
+  # ─────────────────────────────────────────────
+  config-service:
+    build:
+      context: ./services/config-service
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      DATABASE_URL: postgresql://aca:aca_secret@postgres:5432/aca
+      SERVICE_PORT: 8001
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure
+
+  metrics-fetcher:
+    build:
+      context: ./services/metrics-fetcher
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      PROMETHEUS_URL: http://prometheus:9090
+      SERVICE_PORT: 8002
+    restart: on-failure
+
+  analysis-engine:
+    build:
+      context: ./services/analysis-engine
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      METRICS_FETCHER_URL: http://metrics-fetcher:8002
+      SERVICE_PORT: 8003
+    restart: on-failure
+
+  job-manager:
+    build:
+      context: ./services/job-manager
+      dockerfile: Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      DATABASE_URL: postgresql://aca:aca_secret@postgres:5432/aca
+      REDIS_URL: redis://redis:6379
+      ANALYSIS_ENGINE_URL: http://analysis-engine:8003
+      METRICS_FETCHER_URL: http://metrics-fetcher:8002
+      CONFIG_SERVICE_URL: http://config-service:8001
+      RESULTS_SERVICE_URL: http://results-service:8005
+      SERVICE_PORT: 8004
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: on-failure
+
+  results-service:
+    build:
+      context: ./services/results-service
+      dockerfile: Dockerfile
+    ports:
+      - "8005:8005"
+    environment:
+      DATABASE_URL: postgresql://aca:aca_secret@postgres:5432/aca
+      REDIS_URL: redis://redis:6379
+      SERVICE_PORT: 8005
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: on-failure
+
+  # ─────────────────────────────────────────────
+  # API Gateway  (Node.js + Socket.IO)
+  # ─────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      CONFIG_SERVICE_URL: http://config-service:8001
+      JOB_MANAGER_URL: http://job-manager:8004
+      RESULTS_SERVICE_URL: http://results-service:8005
+      REDIS_URL: redis://redis:6379
+      PORT: 3000
+    depends_on:
+      - config-service
+      - job-manager
+      - results-service
+      - redis
+    restart: on-failure
+
+  # ─────────────────────────────────────────────
+  # Frontend UI
+  # ─────────────────────────────────────────────
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:3000
+    ports:
+      - "5173:80"
+    depends_on:
+      - api-gateway
+
+volumes:
+  postgres_data:

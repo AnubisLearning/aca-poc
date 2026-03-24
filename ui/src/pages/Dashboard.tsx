@@ -4,7 +4,7 @@ import { listJobs, listConfigs, createAndStartJob, createSuite } from "../api";
 import type { AnalysisJob, CanaryConfig, JobEvent } from "../types";
 import { StatusBadge } from "../components/StatusBadge";
 import { onJobEvent } from "../socket";
-import { Activity, Plus, PlayCircle, Repeat } from "lucide-react";
+import { Activity, Plus, PlayCircle, Repeat, X } from "lucide-react";
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -14,6 +14,7 @@ export const Dashboard: React.FC = () => {
   const [duration, setDuration] = useState<string>("");
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showLaunchModal, setShowLaunchModal] = useState(false);
 
   // Suite state
   const [suiteConfig, setSuiteConfig] = useState<string>("");
@@ -36,7 +37,6 @@ export const Dashboard: React.FC = () => {
     return () => clearInterval(interval);
   }, [reload]);
 
-  // Listen for real-time job events to refresh statuses
   useEffect(() => {
     const off = onJobEvent((event: JobEvent) => {
       setJobs((prev) =>
@@ -79,6 +79,8 @@ export const Dashboard: React.FC = () => {
     setError(null);
     try {
       await createAndStartJob(selectedConfig, duration ? parseInt(duration) : undefined);
+      setShowLaunchModal(false);
+      setDuration("");
       await reload();
     } catch (e: any) {
       setError(e.response?.data?.detail ?? String(e));
@@ -87,9 +89,7 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const running = jobs.filter((j) => j.status === "running").length;
-  const completed = jobs.filter((j) => j.status === "completed").length;
-  const failed = jobs.filter((j) => j.status === "failed").length;
+  const activeJobs = jobs.filter((j) => ["pending", "running", "paused"].includes(j.status));
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8 space-y-8">
@@ -101,63 +101,96 @@ export const Dashboard: React.FC = () => {
             Monitor and control canary analysis jobs in real time
           </p>
         </div>
-        <Link to="/configs/new" className="btn-primary">
-          <Plus className="w-4 h-4" />
-          New Config
-        </Link>
-      </div>
-
-      {/* Quick Launch */}
-      <div className="card space-y-4">
-        <h2 className="text-base font-semibold text-white flex items-center gap-2">
-          <PlayCircle className="w-5 h-5 text-blue-400" />
-          Quick Launch
-        </h2>
-        <div className="flex flex-wrap gap-3 items-end">
-          <div className="flex-1 min-w-[200px]">
-            <label className="label">Canary Config</label>
-            <select
-              className="input"
-              value={selectedConfig}
-              onChange={(e) => setSelectedConfig(e.target.value)}
-            >
-              {configs.length === 0 && (
-                <option value="">No configs – create one first</option>
-              )}
-              {configs.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="w-36">
-            <label className="label">Duration (s) – optional</label>
-            <input
-              type="number"
-              className="input"
-              placeholder="default from config"
-              value={duration}
-              onChange={(e) => setDuration(e.target.value)}
-              min={30}
-            />
-          </div>
+        <div className="flex items-center gap-2">
           <button
             className="btn-primary"
-            onClick={handleLaunch}
-            disabled={!selectedConfig || launching}
+            onClick={() => { setError(null); setShowLaunchModal(true); }}
           >
-            {launching ? "Launching…" : "Start Analysis"}
+            <PlayCircle className="w-4 h-4" />
+            Quick Launch
           </button>
+          <Link to="/configs/new" className="btn-secondary">
+            <Plus className="w-4 h-4" />
+            New Config
+          </Link>
         </div>
-        {error && <p className="text-red-400 text-sm">{error}</p>}
       </div>
 
-      {/* Schedule Suite */}
+      {/* Quick Launch Modal */}
+      {showLaunchModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-white flex items-center gap-2">
+                <PlayCircle className="w-5 h-5 text-blue-400" />
+                Quick Launch
+              </h2>
+              <button
+                onClick={() => setShowLaunchModal(false)}
+                className="text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="label">Canary Config</label>
+                <select
+                  className="input"
+                  value={selectedConfig}
+                  onChange={(e) => setSelectedConfig(e.target.value)}
+                >
+                  {configs.length === 0 && (
+                    <option value="">No configs – create one first</option>
+                  )}
+                  {configs.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="label">Duration (seconds) — optional</label>
+                <input
+                  type="number"
+                  className="input"
+                  placeholder="Default from config"
+                  value={duration}
+                  onChange={(e) => setDuration(e.target.value)}
+                  min={30}
+                />
+              </div>
+            </div>
+
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                className="btn-primary flex-1"
+                onClick={handleLaunch}
+                disabled={!selectedConfig || launching}
+              >
+                {launching ? "Launching…" : "Start Analysis"}
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={() => setShowLaunchModal(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Canary Suite */}
       <div className="card space-y-4">
         <h2 className="text-base font-semibold text-white flex items-center gap-2">
           <Repeat className="w-5 h-5 text-purple-400" />
-          Schedule Suite
+          Canary Suite
           <span className="text-xs font-normal text-gray-500">
             — 3 runs, 1 per interval
           </span>
@@ -224,13 +257,13 @@ export const Dashboard: React.FC = () => {
           </Link>
         </div>
 
-        {jobs.filter((j) => ["pending", "running", "paused"].includes(j.status)).length === 0 ? (
+        {activeJobs.length === 0 ? (
           <p className="text-gray-500 text-sm text-center py-8">
             No active jobs. Launch an analysis above.
           </p>
         ) : (
           <div className="divide-y divide-gray-800">
-            {jobs.filter((j) => ["pending", "running", "paused"].includes(j.status)).map((job) => {
+            {activeJobs.map((job) => {
               const cfg = configs.find((c) => c.id === job.config_id);
               return (
                 <div key={job.id} className="flex items-center justify-between py-3">
@@ -248,9 +281,7 @@ export const Dashboard: React.FC = () => {
                       </p>
                     </div>
                   </div>
-
                   <div className="flex items-center gap-4 ml-4">
-                    {/* Progress bar */}
                     {(job.status === "running" || job.status === "paused") && (
                       <div className="w-24 h-1.5 bg-gray-800 rounded-full overflow-hidden hidden md:block">
                         <div

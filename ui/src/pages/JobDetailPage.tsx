@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getRun, controlJob } from "../api";
 import type { AnalysisJob, AnalysisResult, AnalysisSnapshot, JobEvent, MetricResult } from "../types";
@@ -9,8 +9,104 @@ import { ScoreChart } from "../components/ScoreChart";
 import { ScoreDial } from "../components/ScoreDial";
 import { subscribeToJob, unsubscribeFromJob, onJobEvent } from "../socket";
 import {
-  Play, Pause, Square, RotateCcw, ChevronLeft, Clock, Layers,
+  Play, Pause, Square, RotateCcw, ChevronLeft, Clock, Layers, FileDown,
 } from "lucide-react";
+
+async function exportToPDF(
+  reportRef: React.RefObject<HTMLDivElement>,
+  job: AnalysisJob,
+  result: AnalysisResult
+) {
+  const [{ default: jsPDF }, { default: html2canvas }] = await Promise.all([
+    import("jspdf"),
+    import("html2canvas"),
+  ]);
+
+  const el = reportRef.current;
+  if (!el) return;
+
+  const canvas = await html2canvas(el, {
+    scale: 2,
+    useCORS: true,
+    backgroundColor: "#030712", // gray-950
+  });
+
+  const imgData = canvas.toDataURL("image/png");
+  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const margin = 10;
+  const usableW = pageW - margin * 2;
+
+  // Header
+  pdf.setFillColor(3, 7, 18);
+  pdf.rect(0, 0, pageW, 20, "F");
+  pdf.setTextColor(255, 255, 255);
+  pdf.setFontSize(14);
+  pdf.setFont("helvetica", "bold");
+  pdf.text("ACA – Canary Analysis Report", margin, 13);
+
+  // Meta line
+  pdf.setFontSize(8);
+  pdf.setFont("helvetica", "normal");
+  pdf.setTextColor(156, 163, 175);
+  pdf.text(
+    `Job: ${job.id}   |   Status: ${job.status}   |   Duration: ${job.duration}s   |   Exported: ${new Date().toLocaleString()}`,
+    margin,
+    18
+  );
+
+  // Result summary bar
+  const recColor: Record<string, [number, number, number]> = {
+    rollout: [16, 185, 129],
+    rollback: [239, 68, 68],
+    inconclusive: [245, 158, 11],
+  };
+  const [r, g, b] = recColor[result.recommendation] ?? [107, 114, 128];
+  pdf.setFillColor(r, g, b);
+  pdf.rect(0, 21, pageW, 8, "F");
+  pdf.setTextColor(255, 255, 255);
+  pdf.setFontSize(10);
+  pdf.setFont("helvetica", "bold");
+  pdf.text(
+    `${result.recommendation.toUpperCase()}   ·   Score: ${Math.round(result.score)}`,
+    margin,
+    27
+  );
+
+  // Content screenshot
+  const imgH = (canvas.height / canvas.width) * usableW;
+  const startY = 32;
+  const availH = pageH - startY - margin;
+
+  if (imgH <= availH) {
+    pdf.addImage(imgData, "PNG", margin, startY, usableW, imgH);
+  } else {
+    // Multi-page: slice canvas across pages
+    const scale = canvas.width / usableW;
+    let srcY = 0;
+    let isFirst = true;
+    while (srcY < canvas.height) {
+      const sliceH = Math.min(availH * scale, canvas.height - srcY);
+      const sliceCanvas = document.createElement("canvas");
+      sliceCanvas.width = canvas.width;
+      sliceCanvas.height = sliceH;
+      const ctx = sliceCanvas.getContext("2d")!;
+      ctx.drawImage(canvas, 0, srcY, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+      if (!isFirst) {
+        pdf.addPage();
+        pdf.setFillColor(3, 7, 18);
+        pdf.rect(0, 0, pageW, pageH, "F");
+      }
+      pdf.addImage(sliceCanvas.toDataURL("image/png"), "PNG", margin, isFirst ? startY : margin, usableW, sliceH / scale);
+      srcY += sliceH;
+      isFirst = false;
+    }
+  }
+
+  pdf.save(`aca-report-${job.id.slice(0, 8)}.pdf`);
+}
 
 export const JobDetailPage: React.FC = () => {
   const { id: jobId } = useParams<{ id: string }>();
@@ -22,6 +118,9 @@ export const JobDetailPage: React.FC = () => {
   const [liveRecommendation, setLiveRecommendation] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionErr, setActionErr] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  const reportRef = useRef<HTMLDivElement>(null);
 
   const reload = useCallback(async () => {
     if (!jobId) return;
@@ -43,7 +142,6 @@ export const JobDetailPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [reload]);
 
-  // Real-time events
   useEffect(() => {
     if (!jobId) return;
     subscribeToJob(jobId);
@@ -72,11 +170,9 @@ export const JobDetailPage: React.FC = () => {
       }
 
       if (event.event === "job_status" && event.data.status) {
-        setJob((prev) =>
-          prev ? { ...prev, status: event.data.status! } : prev
-        );
+        setJob((prev) => prev ? { ...prev, status: event.data.status! } : prev);
         if (event.data.status === "completed") {
-          setTimeout(reload, 500); // fetch final result
+          setTimeout(reload, 500);
         }
       }
     });
@@ -97,6 +193,16 @@ export const JobDetailPage: React.FC = () => {
     }
   };
 
+  const handleExport = async () => {
+    if (!job || !result) return;
+    setExporting(true);
+    try {
+      await exportToPDF(reportRef, job, result);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   if (loading || !job) {
     return (
       <div className="max-w-5xl mx-auto px-6 py-12 text-center text-gray-500">
@@ -111,6 +217,7 @@ export const JobDetailPage: React.FC = () => {
 
   const progressPct = Math.round(job.progress * 100);
   const isActive = job.status === "running" || job.status === "paused";
+  const isCompleted = job.status === "completed";
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
@@ -159,6 +266,16 @@ export const JobDetailPage: React.FC = () => {
               <RotateCcw className="w-4 h-4" /> Re-run
             </button>
           )}
+          {isCompleted && result && (
+            <button
+              className="btn-secondary"
+              onClick={handleExport}
+              disabled={exporting}
+            >
+              <FileDown className="w-4 h-4" />
+              {exporting ? "Exporting…" : "Export PDF"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -168,102 +285,100 @@ export const JobDetailPage: React.FC = () => {
         </div>
       )}
 
-      {/* Progress bar */}
-      <div className="card space-y-2">
-        <div className="flex justify-between text-xs text-gray-400">
-          <span>Analysis progress</span>
-          <span>{progressPct}%</span>
+      {/* Report capture area */}
+      <div ref={reportRef} className="space-y-6">
+        {/* Progress bar */}
+        <div className="card space-y-2">
+          <div className="flex justify-between text-xs text-gray-400">
+            <span>Analysis progress</span>
+            <span>{progressPct}%</span>
+          </div>
+          <div className="h-2.5 rounded-full bg-gray-800 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-blue-500 transition-all duration-500"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
         </div>
-        <div className="h-2.5 rounded-full bg-gray-800 overflow-hidden">
-          <div
-            className="h-full rounded-full bg-blue-500 transition-all duration-500"
-            style={{ width: `${progressPct}%` }}
-          />
-        </div>
-      </div>
 
-      {/* Score + chart */}
-      <div className="grid md:grid-cols-3 gap-4">
-        {/* Dial */}
-        <div className="card flex items-center justify-center py-6">
-          {displayScore !== null ? (
-            <div className="relative flex flex-col items-center">
+        {/* Score + chart */}
+        <div className="grid md:grid-cols-3 gap-4">
+          <div className="card flex items-center justify-center py-6">
+            {displayScore !== null ? (
               <ScoreDial score={displayScore} recommendation={displayRec} />
-            </div>
-          ) : (
-            <div className="text-gray-600 text-sm text-center">
-              <Layers className="w-8 h-8 mx-auto mb-2 opacity-30" />
-              Score pending…
-            </div>
-          )}
+            ) : (
+              <div className="text-gray-600 text-sm text-center">
+                <Layers className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                Score pending…
+              </div>
+            )}
+          </div>
+          <div className="card md:col-span-2">
+            <p className="text-xs text-gray-400 mb-3 font-medium">Score over time</p>
+            <ScoreChart snapshots={snapshots} />
+          </div>
         </div>
 
-        {/* Chart */}
-        <div className="card md:col-span-2">
-          <p className="text-xs text-gray-400 mb-3 font-medium">Score over time</p>
-          <ScoreChart snapshots={snapshots} />
-        </div>
+        {/* Metric breakdown */}
+        {displayMetrics.length > 0 && (
+          <div className="space-y-3">
+            <h2 className="text-base font-semibold text-white">Metric Breakdown</h2>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {displayMetrics.map((m) => (
+                <MetricCard key={m.metric_name} metric={m} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Grafana-style metrics panel — expand to view */}
+        {snapshots.length > 0 && (
+          <details className="group">
+            <summary className="card cursor-pointer select-none flex items-center justify-between text-sm text-gray-400 hover:text-gray-200 transition-colors">
+              <span className="font-medium">Metrics · Canary vs Baseline</span>
+              <span className="text-xs text-gray-600 group-open:hidden">click to expand</span>
+              <span className="text-xs text-gray-600 hidden group-open:inline">click to collapse</span>
+            </summary>
+            <div className="mt-3">
+              <MetricsPanel snapshots={snapshots} />
+            </div>
+          </details>
+        )}
+
+        {/* Final recommendation banner */}
+        {result && (
+          <div
+            className={`card flex items-center gap-4 border-2 ${
+              result.recommendation === "rollout"
+                ? "border-emerald-700 bg-emerald-950/40"
+                : result.recommendation === "rollback"
+                ? "border-red-700 bg-red-950/40"
+                : "border-amber-700 bg-amber-950/40"
+            }`}
+          >
+            <div className="flex-1">
+              <p className="text-xs text-gray-400 uppercase tracking-wider">Final Recommendation</p>
+              <p
+                className={`text-2xl font-bold mt-1 ${
+                  result.recommendation === "rollout"
+                    ? "text-emerald-400"
+                    : result.recommendation === "rollback"
+                    ? "text-red-400"
+                    : "text-amber-400"
+                }`}
+              >
+                {result.recommendation.toUpperCase()}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-gray-400">Overall Score</p>
+              <p className="text-4xl font-bold text-white">{Math.round(result.score)}</p>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Metric breakdown */}
-      {displayMetrics.length > 0 && (
-        <div className="space-y-3">
-          <h2 className="text-base font-semibold text-white">Metric Breakdown</h2>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {displayMetrics.map((m) => (
-              <MetricCard key={m.metric_name} metric={m} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Grafana-style metrics panel — expand to view */}
-      {snapshots.length > 0 && (
-        <details className="group">
-          <summary className="card cursor-pointer select-none flex items-center justify-between text-sm text-gray-400 hover:text-gray-200 transition-colors">
-            <span className="font-medium">Metrics · Canary vs Baseline</span>
-            <span className="text-xs text-gray-600 group-open:hidden">click to expand</span>
-            <span className="text-xs text-gray-600 hidden group-open:inline">click to collapse</span>
-          </summary>
-          <div className="mt-3">
-            <MetricsPanel snapshots={snapshots} />
-          </div>
-        </details>
-      )}
-
-      {/* Final recommendation banner */}
-      {result && (
-        <div
-          className={`card flex items-center gap-4 border-2 ${
-            result.recommendation === "rollout"
-              ? "border-emerald-700 bg-emerald-950/40"
-              : result.recommendation === "rollback"
-              ? "border-red-700 bg-red-950/40"
-              : "border-amber-700 bg-amber-950/40"
-          }`}
-        >
-          <div className="flex-1">
-            <p className="text-xs text-gray-400 uppercase tracking-wider">Final Recommendation</p>
-            <p
-              className={`text-2xl font-bold mt-1 ${
-                result.recommendation === "rollout"
-                  ? "text-emerald-400"
-                  : result.recommendation === "rollback"
-                  ? "text-red-400"
-                  : "text-amber-400"
-              }`}
-            >
-              {result.recommendation.toUpperCase()}
-            </p>
-          </div>
-          <div className="text-right">
-            <p className="text-xs text-gray-400">Overall Score</p>
-            <p className="text-4xl font-bold text-white">{Math.round(result.score)}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Raw job info */}
+      {/* Raw job info — outside capture area */}
       <details className="card">
         <summary className="cursor-pointer text-sm text-gray-400 select-none">
           Raw job data

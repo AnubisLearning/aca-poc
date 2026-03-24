@@ -7,6 +7,7 @@ import { ConfigFormPage } from "./pages/ConfigFormPage";
 import { JobsPage } from "./pages/JobsPage";
 import { JobDetailPage } from "./pages/JobDetailPage";
 import { SuitePage } from "./pages/SuitePage";
+import { AdminPage } from "./pages/AdminPage";
 import { subscribeToAll } from "./socket";
 
 const App: React.FC = () => {
@@ -26,6 +27,7 @@ const App: React.FC = () => {
           <Route path="/jobs" element={<JobsPage />} />
           <Route path="/jobs/:id" element={<JobDetailPage />} />
           <Route path="/suites/:id" element={<SuitePage />} />
+          <Route path="/admin" element={<AdminPage />} />
         </Routes>
       </main>
     </div>

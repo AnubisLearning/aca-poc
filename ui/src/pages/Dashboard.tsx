@@ -107,21 +107,6 @@ export const Dashboard: React.FC = () => {
         </Link>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: "Configs", value: configs.length, color: "text-blue-400" },
-          { label: "Running", value: running, color: "text-blue-400" },
-          { label: "Completed", value: completed, color: "text-emerald-400" },
-          { label: "Failed", value: failed, color: "text-red-400" },
-        ].map(({ label, value, color }) => (
-          <div key={label} className="card text-center">
-            <p className="text-gray-400 text-xs uppercase tracking-wider">{label}</p>
-            <p className={`text-3xl font-bold mt-1 ${color}`}>{value}</p>
-          </div>
-        ))}
-      </div>
-
       {/* Quick Launch */}
       <div className="card space-y-4">
         <h2 className="text-base font-semibold text-white flex items-center gap-2">

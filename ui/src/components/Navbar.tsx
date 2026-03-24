@@ -1,12 +1,13 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
-import { Activity, Settings, ListOrdered, BarChart2 } from "lucide-react";
+import { Activity, Settings, ListOrdered, BarChart2, ShieldCheck } from "lucide-react";
 import { clsx } from "clsx";
 
 const links = [
   { to: "/", label: "Dashboard", icon: BarChart2 },
   { to: "/configs", label: "Configs", icon: Settings },
   { to: "/jobs", label: "Job History", icon: ListOrdered },
+  { to: "/admin", label: "Admin", icon: ShieldCheck },
 ];
 
 export const Navbar: React.FC = () => (
